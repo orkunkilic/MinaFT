@@ -1,5 +1,5 @@
 {
-  "name": "test-zk",
+  "name": "zk-nft",
   "version": "0.1.5",
   "description": "",
   "author": "",
@@ -29,6 +29,7 @@
     ]
   },
   "dependencies": {
+    "ipfs-core": "^0.14.2",
     "snarkyjs": "^0.2.0"
   },
   "devDependencies": {
