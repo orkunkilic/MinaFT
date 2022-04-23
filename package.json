@@ -15,7 +15,7 @@
   "types": "build/src/index.d.ts",
   "scripts": {
     "run": "rimraf ./build && npm run build && node ./build/src/index.js",
-    "build": "tsc -p tsconfig.json",
+    "build": "rimraf ./build && tsc -p tsconfig.json",
     "coverage": "node --experimental-vm-modules --experimental-wasm-modules --experimental-wasm-threads node_modules/.bin/jest --coverage",
     "format": "prettier --write --ignore-unknown **/*",
     "prepare": "husky install",

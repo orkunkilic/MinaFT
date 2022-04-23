@@ -22,23 +22,20 @@ import {
 } from 'snarkyjs';
 import { NFTStorage, Blob } from 'nft.storage';
 
-export interface Balances {
+export { main, deploy, mint, transfer, getState };
+
+interface Balances {
   address: string;
   balance: Field;
   ids: UInt32[];
 }
 
-export interface Allowances {
+interface Allowances {
   owner: string;
   spenders: string[];
 }
 
-export interface Metadatas {
-  id: UInt32;
-  uri: string;
-}
-
-export class Event extends CircuitValue {
+class Event extends CircuitValue {
   value: Field[];
 
   constructor(value: Field[]) {
@@ -47,7 +44,7 @@ export class Event extends CircuitValue {
   }
 }
 
-export class BalanceEvent extends Event {
+class BalanceEvent extends Event {
   type: Number = 0;
 
   constructor(value: Field[]) {
@@ -55,7 +52,7 @@ export class BalanceEvent extends Event {
   }
 }
 
-export class AllowanceEvent extends Event {
+class AllowanceEvent extends Event {
   type: Number = 1;
 
   constructor(value: Field[]) {
@@ -105,7 +102,7 @@ const uploadFile = async (file: any): Promise<string> => {
   return cid;
 };
 
-export class Bytes extends CircuitValue {
+class Bytes extends CircuitValue {
   value: string;
 
   constructor(value: string) {
@@ -118,7 +115,7 @@ export class Bytes extends CircuitValue {
   }
 }
 
-export class SignatureWithSigner extends CircuitValue {
+class SignatureWithSigner extends CircuitValue {
   @prop signature: Signature;
   @prop signer: PublicKey;
 
@@ -137,7 +134,7 @@ export class SignatureWithSigner extends CircuitValue {
 }
 
 let initialBalance = 10_000_000_000;
-export class ERC721 extends SmartContract {
+class ERC721 extends SmartContract {
   @state(Field) _allowances = State<Field>();
   @state(Field) _balanceOf = State<Field>();
   @state(PublicKey) _owner = State<PublicKey>();
@@ -538,7 +535,7 @@ const main = async () => {
     try {
       console.log('\n====== DEPLOY EVENT EMMITED ======\n');
       // get this from frontend & mock like it came from event
-      const file = [];
+      const file: any = [];
       cid = await uploadFile(file);
       await Mina.transaction(owner, () => {
         const signature = SignatureWithSigner.create(
@@ -743,4 +740,139 @@ const main = async () => {
   }
 };
 
-main();
+main(); // mints 2 token and transfer the other one
+
+// uncomment for using inside dApp
+/* await isReady;
+const Local = Mina.LocalBlockchain();
+Mina.setActiveInstance(Local); */
+
+async function deploy(
+  name: string,
+  symbol: string,
+  totalSupply: number,
+  baseURI: string,
+  baseExtension: string,
+  account: PrivateKey
+) {
+  const zkAppPrivKey = PrivateKey.random();
+  let zkAppAddress = zkAppPrivKey.toPublicKey();
+  let zkAppInterface = {
+    mint(
+      cid: string,
+      toAddress: string,
+      mockId: Field,
+      zkAppAddress: PublicKey,
+      zkAppPrivKey: PrivateKey,
+      privKey: PrivateKey
+    ) {
+      return mint(cid, toAddress, mockId, zkAppAddress, zkAppPrivKey, privKey);
+    },
+    transfer(
+      cid: string,
+      toAddress: string,
+      mockId: Field,
+      zkAppAddress: PublicKey,
+      zkAppPrivKey: PrivateKey,
+      privKey: PrivateKey
+    ) {
+      return transfer(
+        cid,
+        toAddress,
+        mockId,
+        zkAppAddress,
+        zkAppPrivKey,
+        privKey
+      );
+    },
+    getState(zkAppAddress: PublicKey) {
+      return getState(zkAppAddress);
+    },
+  };
+
+  let zkApp = new ERC721(zkAppAddress);
+  await Mina.transaction(account, () => {
+    const p = Party.createSigned(account, { isSameAsFeePayer: true });
+    p.balance.subInPlace(UInt64.fromNumber(initialBalance));
+    zkApp.deploy({
+      verificationKey: undefined,
+      zkappKey: zkAppPrivKey,
+      owner: account.toBase58(),
+      name,
+      symbol,
+      totalSupply: new UInt32(Field(totalSupply)),
+      baseURI,
+      baseExtension,
+    });
+  })
+    .send()
+    .wait();
+
+  return zkAppInterface;
+}
+
+async function getState(zkAppAddress: PublicKey) {
+  try {
+    let b = Mina.getAccount(zkAppAddress);
+    return b.zkapp.appState;
+  } catch (error) {
+    console.log('Error in get:>>', error);
+  }
+}
+
+async function transfer(
+  cid: string,
+  toAddress: string,
+  mockId: Field,
+  zkAppAddress: PublicKey,
+  zkAppPrivKey: PrivateKey,
+  privKey: PrivateKey
+) {
+  let zkApp = new ERC721(zkAppAddress);
+  let tx = Mina.transaction(privKey, async () => {
+    zkApp.transfer(
+      new Bytes(cid),
+      new Bytes(toAddress),
+      new UInt32(Field(1)),
+      createSignature(zkAppAddress, privKey),
+      mockId
+    );
+    zkApp.self.sign(zkAppPrivKey);
+    zkApp.self.body.incrementNonce = Bool(true);
+  });
+  try {
+    await tx.send().wait();
+  } catch (err) {
+    console.log('Error!');
+  }
+}
+
+async function mint(
+  cid: string,
+  toAddress: string,
+  mockId: Field,
+  zkAppAddress: PublicKey,
+  zkAppPrivKey: PrivateKey,
+  privKey: PrivateKey
+) {
+  let zkApp = new ERC721(zkAppAddress);
+  let tx = Mina.transaction(privKey, async () => {
+    zkApp.mint(
+      new Bytes(cid),
+      new Bytes(toAddress),
+      createSignature(zkAppAddress, privKey),
+      mockId
+    );
+    zkApp.self.sign(zkAppPrivKey);
+    zkApp.self.body.incrementNonce = Bool(true);
+  });
+  try {
+    await tx.send().wait();
+  } catch (err) {
+    console.log('Error!');
+  }
+}
+function createSignature(zkAppAddress: PublicKey, signer: PrivateKey) {
+  let zkApp = new ERC721(zkAppAddress);
+  return SignatureWithSigner.create(signer, zkApp.nonce.toFields());
+}
