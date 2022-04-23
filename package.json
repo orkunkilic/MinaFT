@@ -31,6 +31,8 @@
   },
   "dependencies": {
     "ipfs-core": "^0.14.2",
+    "mime": "^3.0.0",
+    "nft.storage": "^6.2.0",
     "snarkyjs": "^0.3.0"
   },
   "devDependencies": {

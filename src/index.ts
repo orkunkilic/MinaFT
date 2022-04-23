@@ -1,5 +1,5 @@
 import { Field, SmartContract, state, State, method, prop, UInt64, Poseidon, PrivateKey, CircuitValue, PublicKey, Signature, UInt32, Permissions,  Circuit, isReady, Mina, shutdown, Party, Bool, Encoding, arrayProp, Body, call, callUnproved } from 'snarkyjs';
-
+import { NFTStorage, File, Blob } from 'nft.storage'
 
 export interface Balances {
   address: PublicKey;
@@ -15,6 +15,51 @@ export interface Allowances {
 export interface Metadatas {
   id: UInt32;
   uri: string;
+}
+
+export class Event extends CircuitValue {
+  value: Field[];
+
+  constructor(value: Field[]) {
+    super();
+    this.value = value;
+  }
+}
+
+export class BalanceEvent extends Event {
+  type: Number = 0;
+
+  constructor(value: Field[]) {
+    super(value);
+  }
+}
+
+export class AllowanceEvent extends Event {
+  type: Number = 1;
+
+  constructor(value: Field[]) {
+    super(value);
+  }
+}
+
+export class URIEvent extends Event {
+  type: Number = 2;
+
+  constructor(value: Field[]) {
+    super(value);
+  }
+}
+
+const uploadFile = async (file: any): Promise<string> => {
+  const NFT_STORAGE_TOKEN = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiJkaWQ6ZXRocjoweGZmQTUyZDVDMGNjMDk1RDA2NjQxRTU1NEZjNDUyOGZkRjIzYTUxMmIiLCJpc3MiOiJuZnQtc3RvcmFnZSIsImlhdCI6MTY1MDY3OTk1ODA3NiwibmFtZSI6InprLW5mdCJ9.q8nbrsFmMclciLfKh0x33hiFR50kY4BAm-bsdcK26a0'
+  const client = new NFTStorage({ token: NFT_STORAGE_TOKEN })
+
+  const someData = new Blob([JSON.stringify(
+    file
+  )]);
+  const cid = await client.storeBlob(someData);
+  console.log(cid)
+  return cid;
 }
 
 
@@ -110,8 +155,7 @@ let initialBalance = 10_000_000_000;
 const getDataFromContract = async () => {
 }
 
-
-class ERC721 extends SmartContract {
+export class ERC721 extends SmartContract {
   @state(Field) _symbol = State<Field>();
   @state(Field) _totalSupply = State<Field>();
   @state(Field) _allowances = State<Field>();
@@ -133,26 +177,38 @@ class ERC721 extends SmartContract {
     console.log("ok")
   }
 
-  @method initialize(symbol: Field, totalSupply: Field, s: SignatureWithSigner, zkKey: PrivateKey) {
-    /* console.log("call another contract")
-    callUnproved(ERC721, this.self.publicKey, "symbol", undefined, zkKey).then(
-      (symbol) => {
-        console.log(symbol)
-      }
-    )
-    console.log("call done") */
+  @method async initialize(symbol: Field, totalSupply: Field, s: SignatureWithSigner, zkKey: PrivateKey) {
     s.signature.verify(s.signer, [totalSupply]).assertEquals(true);
     const signer: PublicKey = s.signer;
-    const initialBalanceAsString = 0;
-    const initialBalanceAsField = Field(initialBalanceAsString);
-    this._balanceOf.set(Poseidon.hash([initialBalanceAsField]));
+    this._balanceOf.set(Field(0));
     this._symbol.set((symbol));
     this._totalSupply.set(totalSupply);
     this._owner.set(signer);
     this._idNonce.set(new UInt32(new Field(0)));
     this._allowances.set(Field(0));
     this._tokenURI.set(Field(0));
+    this.emitEvent(new BalanceEvent([Field(0)]));
+    this.emitEvent(new AllowanceEvent([Field(0)]));
+    this.emitEvent(new URIEvent([Field(0)]));
     return true;
+  }
+
+  @method updateBalances(cid: Bytes, s: SignatureWithSigner) {
+    s.signature.verify(s.signer, Encoding.stringToFields(cid.value)).assertEquals(true);
+    const hashedCID = Poseidon.hash(Encoding.stringToFields(cid.value));
+    this._balanceOf.set(hashedCID);
+  }
+
+  @method updateApprovals(cid: Bytes, s: SignatureWithSigner) {
+    s.signature.verify(s.signer, Encoding.stringToFields(cid.value)).assertEquals(true);
+    const hashedCID = Poseidon.hash(Encoding.stringToFields(cid.value));
+    this._allowances.set(hashedCID);
+  }
+
+  @method updateURI(cid: Bytes, s: SignatureWithSigner) {
+    s.signature.verify(s.signer, Encoding.stringToFields(cid.value)).assertEquals(true);
+    const hashedCID = Poseidon.hash(Encoding.stringToFields(cid.value));
+    this._tokenURI.set(hashedCID);
   }
 
   @method mint(balances: Bytes, tokenURIs: Bytes, toAddress: PublicKey, metadata: Bytes, s: SignatureWithSigner) {
@@ -160,11 +216,9 @@ class ERC721 extends SmartContract {
     s.signature.verify(s.signer, nonce.toFields()).assertEquals(true);
     const signer: PublicKey = s.signer;
 
-    //const res = axios.get('').then();
-
     signer.assertEquals(this._owner.get());
 
-    const balancesHash = Poseidon.hash([Field(balances.value)]);
+    const balancesHash = Poseidon.hash(Encoding.stringToFields(balances.value));
     balancesHash.assertEquals((this._balanceOf.get()));
     const balancesObj: Array<Balances> = JSON.parse(balances.value);
     const index = balancesObj.findIndex(item => item.address.equals(toAddress));
@@ -173,16 +227,11 @@ class ERC721 extends SmartContract {
     const idNonce = this._idNonce.get();
     const newIdNonce = idNonce.add(1);
     balancesOfUser.ids.push(newIdNonce);
-
-
     balancesObj[index] = balancesOfUser;
-
     const newBalances = JSON.stringify(balancesObj);
-    const newBalancesAsField = Field(newBalances);
-    const newBalancesHash = Poseidon.hash([newBalancesAsField]);
-    this._balanceOf.set(newBalancesHash);
+    this.emitEvent(new BalanceEvent(Encoding.stringToFields(newBalances)));
 
-    const tokenURIsHash = Poseidon.hash([Field(tokenURIs.value)]);
+    const tokenURIsHash = Poseidon.hash(Encoding.stringToFields(tokenURIs.value));
     tokenURIsHash.assertEquals(this._tokenURI.get());
     const tokenURIsObj: Array<Metadatas> = JSON.parse(tokenURIs.value);
     tokenURIsObj.push({
@@ -190,9 +239,7 @@ class ERC721 extends SmartContract {
       uri: metadata.value
     });
     const newTokenURIs = JSON.stringify(tokenURIsObj);
-    const newTokenURIsAsField = Field(newTokenURIs);
-    const newTokenURIsHash = Poseidon.hash([newTokenURIsAsField]);
-    this._tokenURI.set(newTokenURIsHash);
+    this.emitEvent(new URIEvent(Encoding.stringToFields(newTokenURIs)));
 
 
     this._idNonce.set(newIdNonce);
@@ -200,60 +247,12 @@ class ERC721 extends SmartContract {
     return ([this._balanceOf.get(), this._tokenURI.get(), this._idNonce.get()]);
   }
 
-  // work on this, this can confuse the network!
-  @method batchMint(balances: Bytes, tokenURIs: Bytes, metadatas: BytesArray, toAddress: PublicKeyArray, s: SignatureWithSigner) {
-    const nonce: UInt32 =  this.nonce;
-    s.signature.verify(s.signer, nonce.toFields()).assertEquals(true);
-    const signer: PublicKey = s.signer;
-
-    signer.assertEquals( this._owner.get());
-
-    const balancesHash = Poseidon.hash([Field(balances.value)]);
-    balancesHash.assertEquals(( this._balanceOf.get()));
-
-    const tokenURIsHash = Poseidon.hash([Field(tokenURIs.value)]);
-    tokenURIsHash.assertEquals(( this._tokenURI.get()));
-
-    Circuit.assertEqual(toAddress.value.length, metadatas.value.length);
-
-    for(let i = 0; i < toAddress.value.length; i++) {
-      const balancesObj: Array<Balances> = JSON.parse(balances.value);
-      const index = balancesObj.findIndex(item => item.address.equals(toAddress[i]));
-      const balancesOfUser = balancesObj[index];
-      balancesOfUser.balance = balancesOfUser.balance.add(1);
-      const idNonce =  this._idNonce.get();
-      const newIdNonce = idNonce.add(1);
-      balancesOfUser.ids.push(newIdNonce);
-
-      balancesObj[index] = balancesOfUser;
-
-      const newBalances = JSON.stringify(balancesObj);
-      const newBalancesAsField = Field(newBalances);
-      const newBalancesHash = Poseidon.hash([newBalancesAsField]);
-      this._balanceOf.set(newBalancesHash);
-
-      const tokenURIsObj: Array<Metadatas> = JSON.parse(tokenURIs.value);
-      tokenURIsObj.push({
-        id: newIdNonce,
-        uri: metadatas[i].value
-      });
-      const newTokenURIs = JSON.stringify(tokenURIsObj);
-      const newTokenURIsAsField = Field(newTokenURIs);
-      const newTokenURIsHash = Poseidon.hash([newTokenURIsAsField]);
-      this._tokenURI.set(newTokenURIsHash);
-      this._idNonce.set(newIdNonce);
-
-    }
-
-    return ([ this._balanceOf.get(),  this._tokenURI.get(),  this._idNonce.get()]);
-  }
-
   @method transfer(balances: Bytes, toAddress: PublicKey, value: UInt32, s: SignatureWithSigner) {
     const nonce: UInt32 =  this.nonce;
     s.signature.verify(s.signer, nonce.toFields()).assertEquals(true);
     const signer: PublicKey = s.signer;
 
-    const balancesHash = Poseidon.hash([Field(balances.value)]);
+    const balancesHash = Poseidon.hash(Encoding.stringToFields(balances.value));
     balancesHash.assertEquals(( this._balanceOf.get()));
     const balancesObj: Array<Balances> = JSON.parse(balances.value);
 
@@ -274,9 +273,8 @@ class ERC721 extends SmartContract {
     balancesObj[toIndex] = to;
 
     const newBalances = JSON.stringify(balancesObj);
-    const newBalancesAsField = Field(newBalances);
-    const newBalancesHash = Poseidon.hash([newBalancesAsField]);
-    this._balanceOf.set(newBalancesHash);
+    
+    this.emitEvent(new BalanceEvent(Encoding.stringToFields(newBalances)))
 
     return (this._balanceOf.get());
   }
@@ -307,7 +305,7 @@ class ERC721 extends SmartContract {
     s.signature.verify(s.signer, nonce.toFields()).assertEquals(true);
     const signer: PublicKey = s.signer;
 
-    const allowanceHash = Poseidon.hash([Field(allowances.value)]);
+    const allowanceHash = Poseidon.hash(Encoding.stringToFields(allowances.value));
     allowanceHash.assertEquals(( this._allowances.get()));
     const allowanceObj: Array<Allowances> = JSON.parse(allowances.value);
     const allowanceIndex = allowanceObj.findIndex(item => item.owner.equals(signer));
@@ -319,10 +317,8 @@ class ERC721 extends SmartContract {
       allowanceObj.push(newAllowanceObj);
 
       const newAllowances = JSON.stringify(allowanceObj);
-      const newAllowancesAsField = Field(newAllowances);
-      const newAllowancesHash = Poseidon.hash([newAllowancesAsField]);
-      this._allowances.set(newAllowancesHash);
-
+      
+      this.emitEvent(new AllowanceEvent(Encoding.stringToFields(newAllowances)))
       return true; // owner created & spender added
     }
     const allowancesOfUser = allowanceObj[allowanceIndex];
@@ -335,9 +331,7 @@ class ERC721 extends SmartContract {
     allowanceObj[allowanceIndex] = allowancesOfUser;
 
     const newAllowances = JSON.stringify(allowanceObj);
-    const newAllowancesAsField = Field(newAllowances);
-    const newAllowancesHash = Poseidon.hash([newAllowancesAsField]);
-    this._allowances.set(newAllowancesHash);
+    this.emitEvent(new AllowanceEvent(Encoding.stringToFields(newAllowances)))
 
     return ( this._allowances.get()); // ok
   }
@@ -363,7 +357,7 @@ class ERC721 extends SmartContract {
     s.signature.verify(s.signer, nonce.toFields()).assertEquals(true);
     const signer: PublicKey = s.signer;
 
-    const allowanceHash = Poseidon.hash([Field(allowances.value)]);
+    const allowanceHash = Poseidon.hash(Encoding.stringToFields(allowances.value));
     allowanceHash.assertEquals(( this._allowances.get()));
     const allowanceObj: Array<Allowances> = JSON.parse(allowances.value);
     const allowancesOfUser = allowanceObj.filter(item => item.owner.equals(fromAddress));
@@ -372,7 +366,7 @@ class ERC721 extends SmartContract {
       return false; // not allowed
     }
 
-    const balancesHash = Poseidon.hash([Field(balances.value)]);
+    const balancesHash = Poseidon.hash(Encoding.stringToFields(balances.value));
     balancesHash.assertEquals(( this._balanceOf.get()));
     const balancesObj: Array<Balances> = JSON.parse(balances.value);
     
@@ -393,9 +387,7 @@ class ERC721 extends SmartContract {
     balancesObj[toIndex] = to;
 
     const newBalances = JSON.stringify(balancesObj);
-    const newBalancesAsField = Field(newBalances);
-    const newBalancesHash = Poseidon.hash([newBalancesAsField]);
-    this._balanceOf.set(newBalancesHash);
+    this.emitEvent(new BalanceEvent(Encoding.stringToFields(newBalances)))
 
     return ( this._balanceOf.get());
   }
@@ -407,7 +399,7 @@ class ERC721 extends SmartContract {
 
     signer.assertEquals( this._owner.get());
     this._owner.set(newOwner);
-    return ( this._owner.get());
+    return ( this._owner.get())
   }
 
   @method isOwner(s: SignatureWithSigner) {
@@ -421,20 +413,15 @@ class ERC721 extends SmartContract {
 
 
 const main = async () => {
-
-
-  console.log("wait for ready")
   await isReady;
-  console.log("ready")
 
   const Local = Mina.LocalBlockchain();
   Mina.setActiveInstance(Local);
 
-  const player1 = Local.testAccounts[0].privateKey;
+  const owner = Local.testAccounts[0].privateKey;
   const player2 = Local.testAccounts[1].privateKey;
 
-  console.log("p1 :>>", player1)
-  const player1Public = player1.toPublicKey();
+  const ownerPublic = owner.toPublicKey();
   const player2Public = player2.toPublicKey();
 
   const zkAppPrivkey = PrivateKey.random();
@@ -444,10 +431,10 @@ const main = async () => {
   console.log('\n\n====== DEPLOYING ======\n\n');
 
   let zkAppInstance = new ERC721(zkAppPubkey);
+  
   try {
-    await Mina.transaction(player1, () => {
-      console.log("tx deploy started")
-      const p = Party.createSigned(player1, { isSameAsFeePayer: true });
+    await Mina.transaction(owner, () => {
+      const p = Party.createSigned(owner, { isSameAsFeePayer: true });
       p.balance.subInPlace(UInt64.fromNumber(initialBalance));
       zkAppInstance.deploy({verificationKey: undefined, zkappKey: zkAppPrivkey});
     })
@@ -459,9 +446,9 @@ const main = async () => {
   }
   
   try {
-    await Mina.transaction(player1, () => {
+    await Mina.transaction(owner, () => {
       console.log("tx init started")
-      const signature = SignatureWithSigner.create(player1, [Field(5)]);
+      const signature = SignatureWithSigner.create(owner, [Field(5)]);
       zkAppInstance.initialize(Field(123), Field(5), signature, zkAppPrivkey);
       zkAppInstance.self.sign(zkAppPrivkey);
       zkAppInstance.self.body.incrementNonce = Bool(true);
@@ -475,7 +462,7 @@ const main = async () => {
 
   try {
     let b = Mina.getAccount(zkAppPubkey);
-    console.log('initial state of the zkApp :>>', b.balance);
+    console.log('initial state of the zkApp :>>');
     for(const state of b.zkapp.appState){
       console.log('state :>>', state.toString());
     }
@@ -484,7 +471,42 @@ const main = async () => {
     console.log("Error in get:>>" , error)
   }
 
+  const file = [
+    {
+      "address":  player2Public.toBase58(),
+      "balances": 1,
+      "ids": [1]
+    }
+  ]
+  //mock listening
+  const cid = await uploadFile(file);
+
   try {
+    await Mina.transaction(owner, () => {
+      console.log("tx update started")
+      zkAppInstance.updateBalances(new Bytes(cid), SignatureWithSigner.create(owner, Encoding.stringToFields(cid)))
+      zkAppInstance.self.sign(zkAppPrivkey);
+      zkAppInstance.self.body.incrementNonce = Bool(true);
+    })
+    .send()
+    .wait();
+
+  } catch (error) {
+    console.log("Error update :>>" , error)
+  }
+
+  try {
+    let b = Mina.getAccount(zkAppPubkey);
+    console.log('last state of the zkApp :>>');
+    for(const state of b.zkapp.appState){
+      console.log('state :>>', state.toString());
+    }
+  
+  } catch (error) {
+    console.log("Error in get:>>" , error)
+  }
+
+ /*  try {
     await Mina.transaction(player2, () => {
       console.log("tx init started")
       const signature = SignatureWithSigner.create(player2, zkAppInstance.nonce.toFields());
@@ -496,8 +518,8 @@ const main = async () => {
     .wait();
 
   } catch (error) {
-    console.log("Error init :>>" , error)
-  }
+    console.log("Error in false sign :>>" , error)
+  } */
 
   try {
 
