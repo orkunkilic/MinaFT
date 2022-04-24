@@ -1,4 +1,6 @@
-# Mina zkApp: Test Zk
+# Mina zkApp: MinaFT
+
+Frontend is here -> [Github](https://github.com/orkunkilic/MinaFT-UI)
 
 This template uses TypeScript.
 
