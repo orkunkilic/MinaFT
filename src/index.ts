@@ -60,6 +60,37 @@ class AllowanceEvent extends Event {
   }
 }
 
+class Bytes extends CircuitValue {
+  value: string;
+
+  constructor(value: string) {
+    super();
+    this.value = value;
+  }
+
+  toFields(): Field[] {
+    return Encoding.stringToFields(this.value);
+  }
+}
+
+class SignatureWithSigner extends CircuitValue {
+  @prop signature: Signature;
+  @prop signer: PublicKey;
+
+  constructor(signature: Signature, signer: PublicKey) {
+    super();
+    this.signature = signature;
+    this.signer = signer;
+  }
+
+  static create(signer: PrivateKey, message: Field[]): SignatureWithSigner {
+    return new SignatureWithSigner(
+      Signature.create(signer, message),
+      signer.toPublicKey()
+    );
+  }
+}
+
 let toAddress: string;
 let toAddress2: string;
 // just mocking zkOracle for now
@@ -101,37 +132,6 @@ const uploadFile = async (file: any): Promise<string> => {
   const cid = await client.storeBlob(someData);
   return cid;
 };
-
-class Bytes extends CircuitValue {
-  value: string;
-
-  constructor(value: string) {
-    super();
-    this.value = value;
-  }
-
-  toFields(): Field[] {
-    return Encoding.stringToFields(this.value);
-  }
-}
-
-class SignatureWithSigner extends CircuitValue {
-  @prop signature: Signature;
-  @prop signer: PublicKey;
-
-  constructor(signature: Signature, signer: PublicKey) {
-    super();
-    this.signature = signature;
-    this.signer = signer;
-  }
-
-  static create(signer: PrivateKey, message: Field[]): SignatureWithSigner {
-    return new SignatureWithSigner(
-      Signature.create(signer, message),
-      signer.toPublicKey()
-    );
-  }
-}
 
 let initialBalance = 10_000_000_000;
 class ERC721 extends SmartContract {
@@ -490,6 +490,9 @@ const main = async () => {
 
   const ownerPublic = owner.toPublicKey();
   const player2Public = player2.toPublicKey();
+
+  console.log('owner privKey :>>', owner.toBase58());
+  console.log('owner pubKey :>>', ownerPublic.toBase58());
 
   toAddress = player2Public.toBase58();
   toAddress2 = ownerPublic.toBase58();
